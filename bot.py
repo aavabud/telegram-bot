@@ -76,7 +76,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📞 Наша связь: +380957347113")
     elif "заявку" in text or "отправить" in text:
         await update.message.reply_text("✍️ Пожалуйста, напишите список товаров, которые вас интересуют. Мы свяжемся с вами в ближайшее время.")
-        # Также можно здесь переслать админу
     else:
         await update.message.reply_text("🤖 Спасибо за сообщение! Мы скоро вам ответим.")
 
@@ -84,7 +83,7 @@ async def send_reminders(app):
     client_ids = get_all_client_ids()
     now = datetime.utcnow()
     if now.weekday() >= 5 or not (9 <= now.hour < 17):
-        return  # только в будни с 9:00 до 17:00
+        return
 
     for client_id in client_ids:
         try:
@@ -104,23 +103,6 @@ if __name__ == '__main__':
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-
-    start_scheduler(app)
-
-    print("🤖 Бот запущен.")
-    app.run_polling()
-import os
-
-if __name__ == '__main__':
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    
-    # Получаем токен из переменной окружения (для безопасности)
-    TOKEN = os.environ.get("BOT_TOKEN")
-
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
     start_scheduler(app)
 
