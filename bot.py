@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -78,10 +79,10 @@ async def send_reminder(app):
             logging.warning(f"Не удалось отправить {user_id}: {e}")
 
 # ==== ОСНОВНАЯ ЛОГИКА ====
-def main():
+async def main():
     from dotenv import load_dotenv
     load_dotenv()
-    TOKEN = os.getenv("BOT_TOKEN")
+    TOKEN = os.getenv("TELEGRAM_TOKEN")  # убедись, что .env содержит TELEGRAM_TOKEN=
 
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -92,7 +93,10 @@ def main():
     scheduler.add_job(send_reminder, "cron", hour="9-16", minute=0, day_of_week="mon-fri", args=[app])
     scheduler.start()
 
-    app.run_polling()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await app.updater.idle()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
