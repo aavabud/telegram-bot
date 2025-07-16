@@ -109,3 +109,20 @@ if __name__ == '__main__':
 
     print("🤖 Бот запущен.")
     app.run_polling()
+import os
+
+if __name__ == '__main__':
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    
+    # Получаем токен из переменной окружения (для безопасности)
+    TOKEN = os.environ.get("BOT_TOKEN")
+
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT, handle_message))
+
+    start_scheduler(app)
+
+    print("🤖 Бот запущен.")
+    app.run_polling()
