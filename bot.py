@@ -14,7 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
 # ==== CONFIG ====
-GROUP_CHAT_ID = -1002280657250  # <-- поменяй на id своей чат-группы
+GROUP_CHAT_ID = -1002280657250  # <-- поменяй на id своей чат-группы!
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,19 +28,16 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 def add_client(user_id: int):
     """Добавляет user_id в clients.txt, если такого ещё нет."""
     if not os.path.exists("clients.txt"):
-        with open("clients.txt", "w"): pass
-    with open("clients.txt") as f:
+        with open("clients.txt", "w", encoding="utf-8"): pass
+    with open("clients.txt", encoding="utf-8", errors="replace") as f:
         existing = set(line.split("—")[0].strip() for line in f if line.strip())
     if str(user_id) not in existing:
-        with open("clients.txt", "a") as f:
+        with open("clients.txt", "a", encoding="utf-8") as f:
             f.write(f"{user_id} — {datetime.now(timezone.utc).isoformat()}\n")
 
 # ==== ERROR HANDLER ====
 async def error_handler(update, context):
     logging.error("Exception while handling an update:", exc_info=context.error)
-    # По желанию — вывести ошибку пользователю/админу:
-    # if update and getattr(update, 'message', None):
-    #     await update.message.reply_text("Произошла внутренняя ошибка, админ уже оповещён.")
 
 # ==== TEST CMD ====
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,23 +119,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==== BROADCAST REMINDERS ====
 async def send_reminder(app):
-    if not os.path.exists("clients.txt"):
-        return
-    with open("clients.txt") as f:
-        ids = set()
-        for line in f:
-            if line.strip():
-                parts = line.strip().split("—")
-                if parts and parts[0].strip().isdigit():
-                    ids.add(parts[0].strip())
-    for user_id in ids:
-        try:
-            await app.bot.send_message(
-                chat_id=int(user_id),
-                text="👷 Напоминаем, что вы можете отправить заявку на стройматериалы.\nМы всегда готовы помочь! 📦"
-            )
-        except Exception as e:
-            logging.warning(f"Не удалось отправить напоминание пользователю {user_id}: {e}")
+    try:
+        if not os.path.exists("clients.txt"):
+            return
+        with open("clients.txt", encoding="utf-8", errors="replace") as f:
+            ids = set()
+            for line in f:
+                if line.strip():
+                    parts = line.strip().split("—")
+                    if parts and parts[0].strip().isdigit():
+                        ids.add(parts[0].strip())
+        for user_id in ids:
+            try:
+                await app.bot.send_message(
+                    chat_id=int(user_id),
+                    text="👷 Напоминаем, что вы можете отправить заявку на стройматериалы.\nМы всегда готовы помочь! 📦"
+                )
+            except Exception as e:
+                logging.warning(f"Не удалось отправить напоминание пользователю {user_id}: {e}")
+    except Exception as e:
+        logging.error(f"Ошибка внутри send_reminder: {e}", exc_info=True)
 
 # ==== SCHEDULER ====
 async def post_init(app):
@@ -155,7 +155,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("testsend", test_send))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    app.add_error_handler(error_handler)  # <-- Добавлен обработчик ошибок!
+    app.add_error_handler(error_handler)
     app.run_polling()
 
 if __name__ == "__main__":
