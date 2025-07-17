@@ -16,7 +16,10 @@ from dotenv import load_dotenv
 # ==== CONFIG ====
 GROUP_CHAT_ID = -1002280657250  # <-- поменяй на id своей чат-группы
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s:%(name)s: %(message)s'
+)
 
 # ==== LOAD ENV ====
 load_dotenv()
@@ -31,6 +34,13 @@ def add_client(user_id: int):
     if str(user_id) not in existing:
         with open("clients.txt", "a") as f:
             f.write(f"{user_id} — {datetime.now(timezone.utc).isoformat()}\n")
+
+# ==== ERROR HANDLER ====
+async def error_handler(update, context):
+    logging.error("Exception while handling an update:", exc_info=context.error)
+    # По желанию — вывести ошибку пользователю/админу:
+    # if update and getattr(update, 'message', None):
+    #     await update.message.reply_text("Произошла внутренняя ошибка, админ уже оповещён.")
 
 # ==== TEST CMD ====
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,6 +155,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("testsend", test_send))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    app.add_error_handler(error_handler)  # <-- Добавлен обработчик ошибок!
     app.run_polling()
 
 if __name__ == "__main__":
