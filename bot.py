@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 # ==== CONFIG ====
 GROUP_CHAT_ID = -1002280657250  # <-- поменяй на id своей чат-группы!
+CLIENTS_PATH = "/data/clients.txt"   # Использовать Persistent Disk Render!
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,12 +28,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 def add_client(user_id: int):
     """Добавляет user_id в clients.txt, если такого ещё нет."""
-    if not os.path.exists("clients.txt"):
-        with open("clients.txt", "w", encoding="utf-8"): pass
-    with open("clients.txt", encoding="utf-8", errors="replace") as f:
+    if not os.path.exists(CLIENTS_PATH):
+        with open(CLIENTS_PATH, "w", encoding="utf-8"): pass
+    with open(CLIENTS_PATH, encoding="utf-8", errors="replace") as f:
         existing = set(line.split("—")[0].strip() for line in f if line.strip())
     if str(user_id) not in existing:
-        with open("clients.txt", "a", encoding="utf-8") as f:
+        with open(CLIENTS_PATH, "a", encoding="utf-8") as f:
             f.write(f"{user_id} — {datetime.now(timezone.utc).isoformat()}\n")
 
 # ==== ERROR HANDLER ====
@@ -120,9 +121,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==== BROADCAST REMINDERS ====
 async def send_reminder(app):
     try:
-        if not os.path.exists("clients.txt"):
+        if not os.path.exists(CLIENTS_PATH):
             return
-        with open("clients.txt", encoding="utf-8", errors="replace") as f:
+        with open(CLIENTS_PATH, encoding="utf-8", errors="replace") as f:
             ids = set()
             for line in f:
                 if line.strip():
