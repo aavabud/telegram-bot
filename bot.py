@@ -15,7 +15,7 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from dotenv import load_dotenv
 
 # ==== CONFIG ====
-GROUP_CHAT_ID = -1002280657250  # <-- замените на id вашей группы
+GROUP_CHAT_ID = -1002280657250  # <-- замените на ID вашей группы
 CLIENTS_PATH = "/data/clients.txt"
 
 logging.basicConfig(
@@ -29,13 +29,10 @@ logging.getLogger('apscheduler.executors.default').setLevel(logging.DEBUG)
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# ==== Клиенты и состояния пользователей ====
 user_states = dict()  # user_id: состояние
 user_order_data = dict()  # user_id: данные заявки
 
-
 def add_client(user_id: int):
-    """Добавляет user_id в clients.txt, если такого ещё нет."""
     if not os.path.exists(CLIENTS_PATH):
         with open(CLIENTS_PATH, "w", encoding="utf-8"): pass
     with open(CLIENTS_PATH, encoding="utf-8", errors="replace") as f:
@@ -44,13 +41,9 @@ def add_client(user_id: int):
         with open(CLIENTS_PATH, "a", encoding="utf-8") as f:
             f.write(f"{user_id} — {datetime.now(timezone.utc).isoformat()}\n")
 
-
-# ==== Обработчик ошибок ====
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logging.error("Exception while handling an update:", exc_info=context.error)
 
-
-# ==== Клавиатуры ====
 def get_main_keyboard():
     keyboard = [
         ["🏷️ Найдешевші будматеріали в Одесі, дізнатись ціни"],
@@ -58,15 +51,10 @@ def get_main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-
 def get_order_keyboard():
-    keyboard = [
-        ["❌ Відмінити"],
-    ]
+    keyboard = [["❌ Відмінити"]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-
-# ==== Команда /start ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = (
@@ -80,13 +68,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = get_main_keyboard()
     await update.message.reply_text(text, reply_markup=reply_markup)
     add_client(user.id)
-
-    # Сбрасываем состояние пользователя при старте
     user_states.pop(user.id, None)
     user_order_data.pop(user.id, None)
 
-
-# ==== Многошаговый сбор заявки и обработка всех сообщений ====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -99,9 +83,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_client(user_id)
     state = user_states.get(user_id)
 
-    # Если пользователь не в процессе
     if state is None:
-        # Обработка кнопки запроса цен
         if message_text == "🏷️ Найдешевші будматеріали в Одесі, дізнатись ціни":
             user_states[user_id] = "waiting_for_price_request"
             prompt = (
@@ -111,8 +93,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(prompt, reply_markup=get_order_keyboard())
             return
-
-        # Кнопка начало заявки
         elif message_text in ["📝 Надіслати заявку", "📝 надiслати заявку"]:
             user_states[user_id] = "waiting_for_list"
             user_order_data[user_id] = dict()
@@ -123,7 +103,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(prompt, reply_markup=get_order_keyboard())
             return
-
         elif "зв’" in message_text.lower() or "связ" in message_text.lower():
             contact_msg = (
                 "📞 Зв’яжіться з нами по телефону: +380957347113"
@@ -132,7 +111,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(contact_msg, reply_markup=get_main_keyboard())
             return
-
         else:
             reply_text = (
                 "🤖 Дякуємо за повідомлення! Ми скоро вам відповімо."
@@ -142,19 +120,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(reply_text, reply_markup=get_main_keyboard())
             return
 
-    # --- В процессе заявки или запроса цен ---
-
-    # Универсальная отмена
     if message_text == "❌ Відмінити" or message_text.lower() == "отменить":
         user_states.pop(user_id, None)
         user_order_data.pop(user_id, None)
-        cancel_text = "Заявку/запит скасовано ❌" if lang == "uk" else "Заявку/запрос отменено ❌"
+        cancel_text = "Заявку/запит скасовано" if lang == "uk" else "Заявку/запрос отменено"
         await update.message.reply_text(cancel_text, reply_markup=get_main_keyboard())
         return
 
-    # Обработка состояний
     if state == "waiting_for_price_request":
-        # Пересылаем запрос в группу
         try:
             text_to_admin = (
                 f"📢 Запит цін від @{user.username or user.first_name} ({user_id}):\n{message_text}"
@@ -211,7 +184,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         no_vals = {"ні", "no", "нет", "n"}
         if message_text.lower() in yes_vals:
             data = user_order_data[user_id]
-            # Посылаем заявку в группу
             order_text = (
                 f"🆕 Нова заявка від @{user.username or user.first_name} ({user_id}):\n\n"
                 f"📝 Будматеріали:\n{data['list']}\n\n"
@@ -251,8 +223,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(err_msg)
             return
 
-
-# ==== Рассылка с маркетинговым текстом ====
 async def send_reminder(app):
     logging.info("send_reminder запущений")
     try:
@@ -274,7 +244,8 @@ async def send_reminder(app):
                     text=(
                         "🏗️ Компанія Авабуд нагадує: ваші будматеріали — понад усе! "
                         "Не відкладайте замовлення на потім, зробіть заявку вже сьогодні і "
-                        "отримайте найкращі умови та ціни! 📦🔥"
+                        "отримайте найкращі умови та ціни! 📦🔥\n\n"
+                        "📞 Телефон для замовлень та консультацій: +380957347113"
                     )
                 )
                 sent_count += 1
@@ -284,33 +255,25 @@ async def send_reminder(app):
     except Exception as e:
         logging.error(f"Помилка в send_reminder: {e}", exc_info=True)
 
-
-# ==== Планировщик ====
 def job_listener(event):
     if event.exception:
         logging.error(f'Помилка при виконанні завдання {event.job_id}: {event.exception}', exc_info=True)
     else:
         logging.info(f'Завдання {event.job_id} виконано успішно')
 
-
 async def post_init(app):
     logging.info("post_init викликаний, запускаємо планувальник")
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
-    scheduler.add_job(send_reminder, "interval", minutes=10, args=[app])
-    # Для бою можно использовать расписание:
-    # scheduler.add_job(send_reminder, "cron", hour="6-16", minute=0, day_of_week="mon-fri", args=[app])
+    # Рассылка каждую полночь с 9:00 до 16:00 каждый час
+    scheduler.add_job(send_reminder, "cron", hour="9-16", minute=0, args=[app])
     scheduler.start()
     logging.info("Планувальник запущений")
 
-
-# ==== Ручная рассылка ====
 async def testsendall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_reminder(context.application)
     await update.message.reply_text("✔️ Розсилка виконана вручну.")
 
-
-# ==== Тестовая рассылка конкретному пользователю ====
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
@@ -321,8 +284,6 @@ async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Помилка при надсиланні: {e}")
 
-
-# ==== MAIN ====
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("❌ BOT_TOKEN не знайдено. Перевірте файл .env")
@@ -333,7 +294,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_error_handler(error_handler)
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
