@@ -11,6 +11,7 @@ from telegram.ext import (
     filters,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from dotenv import load_dotenv
 
 # ==== CONFIG ====
@@ -18,9 +19,13 @@ GROUP_CHAT_ID = -1002280657250  # <-- поменяй на id своей чат-�
 CLIENTS_PATH = "/data/clients.txt"   # Использовать Persistent Disk Render!
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # DEBUG для максимальной информативности
     format='%(asctime)s %(levelname)s:%(name)s: %(message)s'
 )
+
+# Включаем подробное логирование APScheduler
+logging.getLogger('apscheduler').setLevel(logging.DEBUG)
+logging.getLogger('apscheduler.executors.default').setLevel(logging.DEBUG)
 
 # ==== LOAD ENV ====
 load_dotenv()
@@ -147,13 +152,20 @@ async def send_reminder(app):
         logging.error(f"Ошибка внутри send_reminder: {e}", exc_info=True)
 
 # ==== SCHEDULER ====
+def job_listener(event):
+    if event.exception:
+        logging.error(f'Ошибка при выполнении задачи {event.job_id}: {event.exception}', exc_info=True)
+    else:
+        logging.info(f'Задача {event.job_id} выполнена успешно')
+
 async def post_init(app):
     logging.info("post_init вызван, запускаем планировщик")
     scheduler = AsyncIOScheduler(timezone="UTC")
-    # Для теста: раскомментируй следующую строку, чтобы рассылка шла каждую минуту
-    # scheduler.add_job(send_reminder, "interval", minutes=1, args=[app])
-    # Рабочее расписание (с 9 до 16 часов UTC, по будням)
-    scheduler.add_job(send_reminder, "cron", hour="9-16", minute=0, day_of_week="mon-fri", args=[app])
+    scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
+    # Тестовое расписание: рассылка каждые 10 минут
+    scheduler.add_job(send_reminder, "interval", minutes=10, args=[app])
+    # Рабочее расписание (комментируй для текущего теста):
+    # scheduler.add_job(send_reminder, "cron", hour="6-16", minute=0, day_of_week="mon-fri", args=[app])
     scheduler.start()
     logging.info("Планировщик запущен")
 
@@ -169,7 +181,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("testsend", test_send))
-    app.add_handler(CommandHandler("testsendall", testsendall))  # добавлен хендлер для ручной рассылки
+    app.add_handler(CommandHandler("testsendall", testsendall))  # команда для ручной рассылки
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_error_handler(error_handler)
     app.run_polling()
