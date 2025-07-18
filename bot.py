@@ -120,8 +120,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==== BROADCAST REMINDERS ====
 async def send_reminder(app):
+    logging.info("send_reminder вызван")
     try:
         if not os.path.exists(CLIENTS_PATH):
+            logging.warning(f"Файл {CLIENTS_PATH} не найден для рассылки")
             return
         with open(CLIENTS_PATH, encoding="utf-8", errors="replace") as f:
             ids = set()
@@ -130,23 +132,35 @@ async def send_reminder(app):
                     parts = line.strip().split("—")
                     if parts and parts[0].strip().isdigit():
                         ids.add(parts[0].strip())
+        sent_count = 0
         for user_id in ids:
             try:
                 await app.bot.send_message(
                     chat_id=int(user_id),
                     text="👷 Напоминаем, что вы можете отправить заявку на стройматериалы.\nМы всегда готовы помочь! 📦"
                 )
+                sent_count += 1
             except Exception as e:
                 logging.warning(f"Не удалось отправить напоминание пользователю {user_id}: {e}")
+        logging.info(f"Рассылка завершена. Всего сообщений отправлено: {sent_count}")
     except Exception as e:
         logging.error(f"Ошибка внутри send_reminder: {e}", exc_info=True)
 
 # ==== SCHEDULER ====
 async def post_init(app):
+    logging.info("post_init вызван, запускаем планировщик")
     scheduler = AsyncIOScheduler(timezone="UTC")
+    # Для теста: раскомментируй следующую строку, чтобы рассылка шла каждую минуту
+    # scheduler.add_job(send_reminder, "interval", minutes=1, args=[app])
+    # Рабочее расписание (с 9 до 16 часов UTC, по будням)
     scheduler.add_job(send_reminder, "cron", hour="9-16", minute=0, day_of_week="mon-fri", args=[app])
     scheduler.start()
     logging.info("Планировщик запущен")
+
+# ==== COMMAND FOR MANUAL BROADCAST ====
+async def testsendall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_reminder(context.application)
+    await update.message.reply_text("✔️ Рассылка выполнена вручную.")
 
 # ==== MAIN ====
 def main():
@@ -155,6 +169,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("testsend", test_send))
+    app.add_handler(CommandHandler("testsendall", testsendall))  # добавлен хендлер для ручной рассылки
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_error_handler(error_handler)
     app.run_polling()
