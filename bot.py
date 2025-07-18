@@ -2,7 +2,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -15,21 +15,24 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from dotenv import load_dotenv
 
 # ==== CONFIG ====
-GROUP_CHAT_ID = -1002280657250  # <-- поменяй на id своей чат-группы!
-CLIENTS_PATH = "/data/clients.txt"   # Использовать Persistent Disk Render!
+GROUP_CHAT_ID = -1002280657250  # <-- замените на id вашей группы
+CLIENTS_PATH = "/data/clients.txt"
 
 logging.basicConfig(
-    level=logging.DEBUG,  # DEBUG для максимальной информативности
+    level=logging.DEBUG,
     format='%(asctime)s %(levelname)s:%(name)s: %(message)s'
 )
 
-# Включаем подробное логирование APScheduler
 logging.getLogger('apscheduler').setLevel(logging.DEBUG)
 logging.getLogger('apscheduler.executors.default').setLevel(logging.DEBUG)
 
-# ==== LOAD ENV ====
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# ==== Клиенты и состояния пользователей ====
+user_states = dict()  # user_id: состояние
+user_order_data = dict()  # user_id: данные заявки
+
 
 def add_client(user_id: int):
     """Добавляет user_id в clients.txt, если такого ещё нет."""
@@ -41,94 +44,220 @@ def add_client(user_id: int):
         with open(CLIENTS_PATH, "a", encoding="utf-8") as f:
             f.write(f"{user_id} — {datetime.now(timezone.utc).isoformat()}\n")
 
-# ==== ERROR HANDLER ====
-async def error_handler(update, context):
+
+# ==== Обработчик ошибок ====
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logging.error("Exception while handling an update:", exc_info=context.error)
 
-# ==== TEST CMD ====
-async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        await context.bot.send_message(
-            chat_id=7124318893,  # Замени на нужный user_id
-            text="✅ Тестовая рассылка работает!"
-        )
-        await update.message.reply_text("📤 Сообщение отправлено пользователю 7124318893.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка при отправке: {e}")
 
-# ==== START ====
+# ==== Клавиатуры ====
+def get_main_keyboard():
+    keyboard = [
+        ["🏷️ Найдешевші будматеріали в Одесі, дізнатись ціни"],
+        ["📝 Надіслати заявку", "📞 Зв’язатися з нами"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def get_order_keyboard():
+    keyboard = [
+        ["❌ Відмінити"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+# ==== Команда /start ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    lang = user.language_code or 'ru'
-    # Приветствие и кнопки
-    if lang == "uk":
-        text = (
-            "🧱 Авабуд — твій помічник на будівництві! 🛠️\n"
-            "Компанія Авабуд — надійний партнер для будівельників 👷‍♂️\n"
-            "Власні склади 🏢, транспорт 🚚 та найкращі партнерські ціни 💰\n\n"
-            "✅ У нас — дешевше, швидше та якісніше!\n"
-            "📦 Будматеріали під замовлення — просто залиш заявку прямо в боті!\n\n"
-            "📞 Зв’язок: +380957347113"
-        )
-        keyboard = [["📨 Надіслати заявку", "📞 Зв’язатися з нами"]]
-    else:
-        text = (
-            "🧱 Авабуд — твой помощник на стройке! 🛠️\n"
-            "Компания Авабуд — надежный партнёр для строителей 👷‍♂️\n"
-            "Собственные склады 🏢, транспорт 🚚 и лучшие цены от партнёров 💰\n\n"
-            "✅ У нас — дешевле, быстрее и качественнее!\n"
-            "📦 Стройматериалы под заказ — просто оставь заявку прямо в боте!\n\n"
-            "📞 Связь: +380957347113"
-        )
-        keyboard = [["📨 Отправить заявку", "📞 Связаться с нами"]]
-
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    text = (
+        "🧱 Авабуд — твій помічник на будівництві! 🛠️\n"
+        "Компанія Авабуд — надійний партнер для будівельників 👷‍♂️\n"
+        "Власні склади 🏢, транспорт 🚚 та найкращі партнерські ціни 💰\n\n"
+        "✅ У нас — дешевше, швидше та якісніше!\n"
+        "📦 Будматеріали під замовлення — просто залиш заявку прямо в боті!\n\n"
+        "📞 Зв’язок: +380957347113"
+    )
+    reply_markup = get_main_keyboard()
     await update.message.reply_text(text, reply_markup=reply_markup)
     add_client(user.id)
 
-# ==== HANDLE ALL MESSAGES ====
+    # Сбрасываем состояние пользователя при старте
+    user_states.pop(user.id, None)
+    user_order_data.pop(user.id, None)
+
+
+# ==== Многошаговый сбор заявки и обработка всех сообщений ====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
+
     user = update.effective_user
-    message_text = update.message.text.lower()
-    lang = user.language_code or "ru"
-    # Пересылаем админам
-    try:
-        await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text=f"📥 Заявка от @{user.username or user.first_name} ({user.id}):\n{update.message.text}"
-        )
-    except Exception as e:
-        logging.error(f"Ошибка отправки в группу: {e}")
+    user_id = user.id
+    message_text = update.message.text.strip()
+    lang = user.language_code or 'ru'
 
-    # Автоответ юзеру
-    if "связ" in message_text or "зв’яз" in message_text:
-        response = (
-            "📞 Свяжитесь с нами: +380957347113"
-            if lang != "uk"
-            else "📞 Зв’яжіться з нами: +380957347113"
-        )
-    elif "заявк" in message_text or "надіслат" in message_text or "отправ" in message_text:
-        response = (
-            "📨 Пожалуйста, отправьте список необходимых стройматериалов."
-            if lang != "uk"
-            else "📨 Будь ласка, надішліть список необхідних будматеріалів."
-        )
-    else:
-        response = (
-            "🤖 Спасибо за сообщение! Мы скоро вам ответим."
-            if lang != "uk"
-            else "🤖 Дякуємо за повідомлення! Ми скоро вам відповімо."
-        )
-    await update.message.reply_text(response)
+    add_client(user_id)
+    state = user_states.get(user_id)
 
-# ==== BROADCAST REMINDERS ====
+    # Если пользователь не в процессе
+    if state is None:
+        # Обработка кнопки запроса цен
+        if message_text == "🏷️ Найдешевші будматеріали в Одесі, дізнатись ціни":
+            user_states[user_id] = "waiting_for_price_request"
+            prompt = (
+                "Будь ласка, напишіть товар, ціни на який хочете дізнатись."
+                if lang == "uk" else
+                "Пожалуйста, напишите товар, цены на который хотите узнать."
+            )
+            await update.message.reply_text(prompt, reply_markup=get_order_keyboard())
+            return
+
+        # Кнопка начало заявки
+        elif message_text in ["📝 Надіслати заявку", "📝 надiслати заявку"]:
+            user_states[user_id] = "waiting_for_list"
+            user_order_data[user_id] = dict()
+            prompt = (
+                "Будь ласка, напишіть список необхідних будматеріалів у зручному форматі."
+                if lang == "uk" else
+                "Пожалуйста, напишите список необходимых стройматериалов в удобном формате."
+            )
+            await update.message.reply_text(prompt, reply_markup=get_order_keyboard())
+            return
+
+        elif "зв’" in message_text.lower() or "связ" in message_text.lower():
+            contact_msg = (
+                "📞 Зв’яжіться з нами по телефону: +380957347113"
+                if lang == "uk" else
+                "📞 Свяжитесь с нами по телефону: +380957347113"
+            )
+            await update.message.reply_text(contact_msg, reply_markup=get_main_keyboard())
+            return
+
+        else:
+            reply_text = (
+                "🤖 Дякуємо за повідомлення! Ми скоро вам відповімо."
+                if lang == "uk" else
+                "🤖 Спасибо за сообщение! Мы скоро вам ответим."
+            )
+            await update.message.reply_text(reply_text, reply_markup=get_main_keyboard())
+            return
+
+    # --- В процессе заявки или запроса цен ---
+
+    # Универсальная отмена
+    if message_text == "❌ Відмінити" or message_text.lower() == "отменить":
+        user_states.pop(user_id, None)
+        user_order_data.pop(user_id, None)
+        cancel_text = "Заявку/запит скасовано ❌" if lang == "uk" else "Заявку/запрос отменено ❌"
+        await update.message.reply_text(cancel_text, reply_markup=get_main_keyboard())
+        return
+
+    # Обработка состояний
+    if state == "waiting_for_price_request":
+        # Пересылаем запрос в группу
+        try:
+            text_to_admin = (
+                f"📢 Запит цін від @{user.username or user.first_name} ({user_id}):\n{message_text}"
+            )
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text_to_admin)
+            confirmation = (
+                "Дякуємо! Ваш запит надіслано. Скоро ми з вами зв'яжемося."
+                if lang == "uk" else
+                "Спасибо! Ваш запрос отправлен. Скоро с вами свяжутся."
+            )
+            await update.message.reply_text(confirmation, reply_markup=get_main_keyboard())
+        except Exception as e:
+            logging.error(f"Помилка відправки запиту цін в групу: {e}")
+            err_msg = (
+                "Сталася помилка при відправці запиту. Спробуйте пізніше."
+                if lang == "uk" else
+                "Произошла ошибка при отправке запроса. Попробуйте позже."
+            )
+            await update.message.reply_text(err_msg, reply_markup=get_main_keyboard())
+        user_states.pop(user_id, None)
+        return
+
+    if state == "waiting_for_list":
+        user_order_data[user_id]["list"] = message_text
+        prompt = (
+            "Дякуємо! Тепер вкажіть, будь ласка, адресу доставки."
+            if lang == "uk" else
+            "Спасибо! Теперь укажите, пожалуйста, адрес доставки."
+        )
+        user_states[user_id] = "waiting_for_address"
+        await update.message.reply_text(prompt, reply_markup=get_order_keyboard())
+        return
+
+    if state == "waiting_for_address":
+        user_order_data[user_id]["address"] = message_text
+        data = user_order_data[user_id]
+        summary = (
+            f"Ваша заявка:\n"
+            f"📝 Будматеріали:\n{data['list']}\n\n"
+            f"🏠 Адреса доставки:\n{data['address']}\n\n"
+            "Підтверджуєте замовлення? (Так / Ні)"
+            if lang == "uk" else
+            f"Ваша заявка:\n"
+            f"📝 Стройматериалы:\n{data['list']}\n\n"
+            f"🏠 Адрес доставки:\n{data['address']}\n\n"
+            "Подтверждаете заказ? (Да / Нет)"
+        )
+        user_states[user_id] = "waiting_for_confirmation"
+        await update.message.reply_text(summary, reply_markup=get_order_keyboard())
+        return
+
+    if state == "waiting_for_confirmation":
+        yes_vals = {"так", "yes", "да", "y"}
+        no_vals = {"ні", "no", "нет", "n"}
+        if message_text.lower() in yes_vals:
+            data = user_order_data[user_id]
+            # Посылаем заявку в группу
+            order_text = (
+                f"🆕 Нова заявка від @{user.username or user.first_name} ({user_id}):\n\n"
+                f"📝 Будматеріали:\n{data['list']}\n\n"
+                f"🏠 Адреса доставки:\n{data['address']}"
+            )
+            try:
+                await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=order_text)
+            except Exception as e:
+                logging.error(f"Помилка відправки заявки в групу: {e}")
+
+            thanks_msg = (
+                "Дякуємо! Ваша заявка прийнята і буде оброблена найближчим часом."
+                if lang == "uk" else
+                "Спасибо! Ваш заказ принят и будет обработан в ближайшее время."
+            )
+            await update.message.reply_text(thanks_msg, reply_markup=get_main_keyboard())
+            user_states.pop(user_id, None)
+            user_order_data.pop(user_id, None)
+            return
+
+        elif message_text.lower() in no_vals:
+            cancel_text = (
+                "Заявку скасовано. Щоб почати спочатку, скористайтеся командою /start."
+                if lang == "uk" else
+                "Заявка отменена. Чтобы начать заново, используйте команду /start."
+            )
+            await update.message.reply_text(cancel_text, reply_markup=get_main_keyboard())
+            user_states.pop(user_id, None)
+            user_order_data.pop(user_id, None)
+            return
+        else:
+            err_msg = (
+                "Будь ласка, відповідайте 'Так' або 'Ні'."
+                if lang == "uk" else
+                "Пожалуйста, ответьте 'Да' или 'Нет'."
+            )
+            await update.message.reply_text(err_msg)
+            return
+
+
+# ==== Рассылка с маркетинговым текстом ====
 async def send_reminder(app):
-    logging.info("send_reminder вызван")
+    logging.info("send_reminder запущений")
     try:
         if not os.path.exists(CLIENTS_PATH):
-            logging.warning(f"Файл {CLIENTS_PATH} не найден для рассылки")
+            logging.warning(f"Файл {CLIENTS_PATH} не знайдено для розсилки")
             return
         with open(CLIENTS_PATH, encoding="utf-8", errors="replace") as f:
             ids = set()
@@ -142,49 +271,69 @@ async def send_reminder(app):
             try:
                 await app.bot.send_message(
                     chat_id=int(user_id),
-                    text="👷 Напоминаем, что вы можете отправить заявку на стройматериалы.\nМы всегда готовы помочь! 📦"
+                    text=(
+                        "🏗️ Компанія Авабуд нагадує: ваші будматеріали — понад усе! "
+                        "Не відкладайте замовлення на потім, зробіть заявку вже сьогодні і "
+                        "отримайте найкращі умови та ціни! 📦🔥"
+                    )
                 )
                 sent_count += 1
             except Exception as e:
-                logging.warning(f"Не удалось отправить напоминание пользователю {user_id}: {e}")
-        logging.info(f"Рассылка завершена. Всего сообщений отправлено: {sent_count}")
+                logging.warning(f"Не вдалося надіслати нагадування користувачу {user_id}: {e}")
+        logging.info(f"Розсилка завершена. Надіслано повідомлень: {sent_count}")
     except Exception as e:
-        logging.error(f"Ошибка внутри send_reminder: {e}", exc_info=True)
+        logging.error(f"Помилка в send_reminder: {e}", exc_info=True)
 
-# ==== SCHEDULER ====
+
+# ==== Планировщик ====
 def job_listener(event):
     if event.exception:
-        logging.error(f'Ошибка при выполнении задачи {event.job_id}: {event.exception}', exc_info=True)
+        logging.error(f'Помилка при виконанні завдання {event.job_id}: {event.exception}', exc_info=True)
     else:
-        logging.info(f'Задача {event.job_id} выполнена успешно')
+        logging.info(f'Завдання {event.job_id} виконано успішно')
+
 
 async def post_init(app):
-    logging.info("post_init вызван, запускаем планировщик")
+    logging.info("post_init викликаний, запускаємо планувальник")
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
-    # Тестовое расписание: рассылка каждые 10 минут
     scheduler.add_job(send_reminder, "interval", minutes=10, args=[app])
-    # Рабочее расписание (комментируй для текущего теста):
+    # Для бою можно использовать расписание:
     # scheduler.add_job(send_reminder, "cron", hour="6-16", minute=0, day_of_week="mon-fri", args=[app])
     scheduler.start()
-    logging.info("Планировщик запущен")
+    logging.info("Планувальник запущений")
 
-# ==== COMMAND FOR MANUAL BROADCAST ====
+
+# ==== Ручная рассылка ====
 async def testsendall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_reminder(context.application)
-    await update.message.reply_text("✔️ Рассылка выполнена вручную.")
+    await update.message.reply_text("✔️ Розсилка виконана вручну.")
+
+
+# ==== Тестовая рассылка конкретному пользователю ====
+async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        await context.bot.send_message(
+            chat_id=7124318893,  # замените на нужный user_id
+            text="✅ Тестова розсилка працює!"
+        )
+        await update.message.reply_text("📤 Повідомлення надіслано користувачу 7124318893.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Помилка при надсиланні: {e}")
+
 
 # ==== MAIN ====
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("❌ BOT_TOKEN не найден. Убедитесь, что он указан в .env")
+        raise RuntimeError("❌ BOT_TOKEN не знайдено. Перевірте файл .env")
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("testsend", test_send))
-    app.add_handler(CommandHandler("testsendall", testsendall))  # команда для ручной рассылки
+    app.add_handler(CommandHandler("testsendall", testsendall))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_error_handler(error_handler)
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
