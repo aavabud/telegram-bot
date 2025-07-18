@@ -55,9 +55,18 @@ def get_order_keyboard():
     keyboard = [["❌ Відмінити"]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+def get_lang(update: Update):
+    # Корректное определение языка с учётом вариантов (например, 'uk-UA')
+    lang = (update.effective_user.language_code or 'ru').lower()
+    if lang.startswith("uk"):
+        return "uk"
+    else:
+        return "ru"
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    text = (
+    lang = get_lang(update)
+    text_uk = (
         "🧱 Авабуд — твій помічник на будівництві! 🛠️\n"
         "Компанія Авабуд — надійний партнер для будівельників 👷‍♂️\n"
         "Власні склади 🏢, транспорт 🚚 та найкращі партнерські ціни 💰\n\n"
@@ -65,6 +74,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📦 Будматеріали під замовлення — просто залиш заявку прямо в боті!\n\n"
         "📞 Зв’язок: +380957347113"
     )
+    text_ru = (
+        "🧱 Авабуд — твой помощник на стройке! 🛠️\n"
+        "Компания Авабуд — надежный партнёр для строителей 👷‍♂️\n"
+        "Собственные склады 🏢, транспорт 🚚 и лучшие цены от партнёров 💰\n\n"
+        "✅ У нас — дешевле, быстрее и качественнее!\n"
+        "📦 Стройматериалы под заказ — просто оставь заявку прямо в боте!\n\n"
+        "📞 Связь: +380957347113"
+    )
+    text = text_uk if lang == "uk" else text_ru
     reply_markup = get_main_keyboard()
     await update.message.reply_text(text, reply_markup=reply_markup)
     add_client(user.id)
@@ -78,7 +96,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     message_text = update.message.text.strip()
-    lang = user.language_code or 'ru'
+    lang = get_lang(update)
 
     add_client(user_id)
     state = user_states.get(user_id)
@@ -265,7 +283,7 @@ async def post_init(app):
     logging.info("post_init викликаний, запускаємо планувальник")
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
-    # Рассылка каждую полночь с 9:00 до 16:00 каждый час
+    # Рассылка каждый час с 9 до 16
     scheduler.add_job(send_reminder, "cron", hour="9-16", minute=0, args=[app])
     scheduler.start()
     logging.info("Планувальник запущений")
@@ -277,7 +295,7 @@ async def testsendall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
-            chat_id=7124318893,  # замените на нужный user_id
+            chat_id=7124318893,
             text="✅ Тестова розсилка працює!"
         )
         await update.message.reply_text("📤 Повідомлення надіслано користувачу 7124318893.")
